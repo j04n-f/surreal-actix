@@ -1,0 +1,52 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Surreal-Actix - Master Rule Index
+
+This document serves as the central index for all active Cursor rules within this repository, organized by category. These rules define processes, structures, and guidelines for development.
+
+## Core & General
+
+Fundamental project structure, setup, and general development guidelines.
+
+| Rule File                          | Description                                                                                   |
+| :--------------------------------- | :-------------------------------------------------------------------------------------------  |
+| [cursor-rules.mdc](mdc:.cursor/rules/cursor-rules.mdc)                  | Defines how to create, modify, and manage Cursor rules within the project.                    |
+| [task-list.mdc](mdc:.cursor/rules/task-list.mdc)                     | Specifies the format and process for using markdown task lists for tracking project progress. |
+| [project-structure.mdc](mdc:.cursor/rules/project-structure.mdc)             | Outlines the Onion Architecture used for organizing project files and directories.            |
+
+## Testing
+
+General guidelines for application testing.
+
+| Rule File                          | Description                                                                                     |
+| :--------------------------------- | :---------------------------------------------------------------------------------------------- |
+| [testing.mdc](mdc:.cursor/rules/testing.mdc)                       | Provides general guidelines and strategies for testing the application across different layers. |
+
+## Backend & API
+
+Guidelines for implementing backend logic, APIs, and data persistence.
+
+| Rule File                          | Description                                                                                                                |
+| :--------------------------------- | :------------------------------------------------------------------------------------------------------------------------- |
+| [development-guide.mdc](mdc:.cursor/rules/development-guide.mdc)             | Best practices for developing the Rust backend using Actix-web, covering coding standards, error handling, and API design. |
+| [surrealdb.mdc](mdc:.cursor/rules/surrealdb.mdc)                     | Procedures for managing SurrealDB database migrations and generating schema definitions.                                   |
+| [dto-validation.mdc](mdc:.cursor/rules/dto-validation.mdc)                | Standards and methods for validating incoming Data Transfer Objects (DTOs) in the API layer.                               |
+
+## Documentation
+
+Guidelines for code and endpoint documentation.
+
+| Rule File                          | Description                                                                                                                    |
+| :--------------------------------- | :----------------------------------------------------------------------------------------------------------------------------- |
+| [openapi-documentation.mdc](mdc:.cursor/rules/openapi-documentation.mdc)         | Instructions on documenting API endpoints using Rust doc comments compatible with Utoipa for OpenAPI specification generation. |
+
+## Features
+
+Application features descriptions and requirements.
+
+| Rule File                          | Description                                                                          |
+| :--------------------------------- | :----------------------------------------------------------------------------------- |
+| [accounts.mdc](mdc:.cursor/rules/features/accounts.mdc)                      | Details the requirements and implementation specifics for the user accounts feature. |

@@ -1,0 +1,171 @@
+---
+description: Account Feature
+globs:
+alwaysApply: false
+---
+# Feature: Accounts
+
+This feature manages user account creation (signup) and authentication (signin) within the application. It provides API endpoints for users to register and log in.
+
+## Endpoints
+
+Based on `src/api/controllers/account.rs`:
+
+*   **`POST /signup`**: Registers a new user account.
+*   **`POST /signin`**: Authenticates an existing user and provides an access token.
+
+## Feature Requirements
+
+Based on `src/api/controllers/account.rs` and associated DTOs (`src/api/dto/account/`).
+
+### Signup (`POST /signup`)
+
+*   **Input:** `CreateAccountDTO` containing `name`, `email`, and `password`.
+*   **Validation Rules (derived from DTO validation & tests):**
+    *   `name`: Required, must be at least 3 characters long.
+    *   `email`: Required, must be a valid email format, must contain between 3 and 255 characters.
+    *   `password`: Required, must contain between 8 and 72 characters, must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (e.g., `!@#$%^&*()`).
+*   **Core Logic:**
+    *   Validate the input DTO based on the rules above.
+    *   Check if an account with the given email already exists.
+    *   If validation passes and the email is unique, hash the password.
+    *   Create the new account record in the database.
+*   **Output (Success):** `AccountDTO` containing the `id`, `name`, and `email` of the newly created account.
+*   **Output (Error):** Appropriate `AppError` response (e.g., `400 Bad Request` for missing fields, `409 Conflict` for existing email, `422 Unprocessable Entity` for validation failures).
+
+### Signin (`POST /signin`)
+
+*   **Input:** `CredentialsDTO` containing `email` and `password`.
+*   **Validation Rules:** Implicitly requires valid email format and non-empty fields, though specific DTO validations might be present.
+*   **Core Logic:**
+    *   Validate the input DTO format.
+    *   Find the account associated with the provided email.
+    *   If the account exists, verify the provided password against the stored hash.
+    *   If authentication is successful, generate a JSON Web Token (JWT).
+    *   Set the JWT as an HTTP-only, secure cookie (`Authorization`).
+*   **Output (Success):** `AccessTokenDTO` containing the JWT `token` and its `expires_at` timestamp. The `Authorization` cookie is also set.
+*   **Output (Error):** Appropriate `AppError` response (e.g., `401 Unauthorized` for invalid credentials or non-existent account).
+
+## Happy Paths
+
+### 1. Successful Signup
+
+1.  **User Action:** Sends `POST /signup` request with valid `name`, unique `email`, and strong `password`.
+2.  **System Response:**
+    *   Status Code: `200 OK`.
+    *   Body: `AccountDTO` with the new account's details.
+
+### 2. Successful Signin
+
+1.  **User Action:** Sends `POST /signin` request with the correct `email` and `password` for an existing account.
+2.  **System Response:**
+    *   Status Code: `200 OK`.
+    *   Body: `AccessTokenDTO` with the JWT.
+    *   Cookie: `Authorization` cookie is set.
+
+## Sad Paths
+
+Based on tests in `src/api/controllers/account.rs`:
+
+### Signup
+
+*   **Existing Email:**
+    *   **Action:** Send `POST /signup` with an email that already exists.
+    *   **Response:** `409 Conflict` (`AppError::Conflict("Account already exists")`).
+*   **Missing Fields:**
+    *   **Action:** Send `POST /signup` without `name`, `email`, or `password`.
+    *   **Response:** `400 Bad Request` (`AppError::BadRequest("Missing field ...")`).
+*   **Validation Errors (Examples):**
+    *   **Action:** Send `POST /signup` with an invalid email format (`not-an-email`).
+    *   **Response:** `422 Unprocessable Entity` (`AppError::UnprocessableEntity("Invalid email format")`).
+    *   **Action:** Send `POST /signup` with a weak password (`weak`).
+    *   **Response:** `422 Unprocessable Entity` (`AppError::UnprocessableEntity("Password must contain ...")`).
+    *   **Action:** Send `POST /signup` with a short name (`Ab`).
+    *   **Response:** `422 Unprocessable Entity` (`AppError::UnprocessableEntity("Name must have at least 3 characters")`).
+    *   **Action:** Send `POST /signup` with a password missing required character types.
+    *   **Response:** `422 Unprocessable Entity` (`AppError::UnprocessableEntity("Password must contain ...")`).
+    *   **Action:** Send `POST /signup` with an email exceeding the maximum length.
+    *   **Response:** `422 Unprocessable Entity` (`AppError::UnprocessableEntity("Email must contain between 3 and 255 characters")`).
+
+### Signin
+
+*   **Invalid Credentials:**
+    *   **Action:** Send `POST /signin` with an incorrect password for an existing email.
+    *   **Response:** `401 Unauthorized` (`AppError::Unauthorized()`).
+*   **Non-Existent Account:**
+    *   **Action:** Send `POST /signin` with an email that does not correspond to any account.
+    *   **Response:** `401 Unauthorized` (`AppError::Unauthorized()`).
+*   **Malformed Request:**
+    *   **Action:** Send `POST /signin` with invalid JSON or missing fields.
+    *   **Response:** `400 Bad Request`.
+
+## Payloads
+
+### Signup Request (`CreateAccountDTO`)
+
+```json
+{
+  "name": "Joan Doe",
+  "email": "joan.doe@example.com",
+  "password": "stR0ngP4ssw0rd!"
+}
+```
+
+### Signup Success Response (`AccountDTO`)
+
+```json
+{
+  "id": "account:ckw9z9q9j0000qjw9z9q9j000", // Example ID
+  "name": "Joan Doe",
+  "email": "joan.doe@example.com"
+}
+```
+
+### Signin Request (`CredentialsDTO`)
+
+```json
+{
+  "email": "joan.doe@example.com",
+  "password": "stR0ngP4ssw0rd!"
+}
+```
+
+### Signin Success Response (`AccessTokenDTO`)
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", // Example JWT
+  "expires_at": 1678886400 // Example Unix timestamp
+}
+```
+
+### Error Response (`AppError` based structure, examples from controller tests)
+
+*   **Status:** `400 Bad Request`
+    ```json
+    {
+      "code": 400,
+      "message": "missing field `name`"
+    }
+    ```
+*   **Status:** `409 Conflict`
+    ```json
+    {
+      "code": 409,
+      "message": "Account already exists"
+    }
+    ```
+*   **Status:** `422 Unprocessable Entity`
+    ```json
+    {
+      "code": 422,
+      "message": "Invalid email format"
+    }
+    ```
+*   **Status:** `401 Unauthorized`
+    ```json
+    {
+        "code": 401,
+        "message": "Unauthorized"
+    }
+    ```

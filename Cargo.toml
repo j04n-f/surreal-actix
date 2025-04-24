@@ -1,0 +1,46 @@
+[package]
+name = "surreal-actix"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = { version = "4.10.2" }
+figment = { version = "0.10.19", features = ["env", "toml"] }
+serde = { version = "1.0.215", features = ["derive"] }
+actix-cors = { version = "0.7.0" }
+surrealdb = { version = "2.2.1" }
+thiserror = { version = "2.0.9" }
+async-trait = { version = "0.1.85" }
+argon2 = { version = "0.5.3" }
+opentelemetry = "0.28"
+opentelemetry-otlp = { version = "0.28", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.28", features = ["rt-tokio-current-thread"] }
+opentelemetry-semantic-conventions = "0.28"
+tracing = "0.1"
+tracing-actix-web = { version = "0.7.16", features = ["opentelemetry_0_28"] }
+tracing-bunyan-formatter = "0.3"
+tracing-opentelemetry = "0.29"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+utoipa = { version = "5.3.1", features = ["actix_extras"] }
+utoipa-swagger-ui = { version = "9.0.0", features = ["actix-web"] }
+utoipa-actix-web = { version = "0.1.2" }
+zip = { version = "2.4.2" }
+once_cell = { version = "1.20.2" }
+regex = { version = "1.11.1", default-features = false, features = ["std"] }
+validator = { version = "0.20", features = ["derive"] }
+futures = { version = "0.3.31" }
+mime = { version = "0.3.17" }
+serde_json = { version = "1.0.104" }
+surrealdb-migrations = { version = "2.2.0" }
+include_dir = { version = "0.7.4" }
+chrono = { version = "0.4.39" }
+jsonwebtoken = { version = "9.3.0" }
+uuid = { version = "1.5.0", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1.43.0" }
+testcontainers = { version = "0.23.3" }
+testcontainers-modules = { git = "https://github.com/testcontainers/testcontainers-rs-modules-community", branch = "main", features = ["surrealdb"] }
+actix-http = { version = "3.9.0" }
+openssl = { version = "0.10.71" }
+rstest = { version = "0.25.0" }

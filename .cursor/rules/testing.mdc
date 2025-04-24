@@ -1,0 +1,381 @@
+---
+description:
+globs: src/**/*.rs
+alwaysApply: false
+---
+# Application Testing Guidelines
+
+This document outlines the guidelines for writing unit and integration tests in this Rust backend application. Consistent and effective testing is crucial for maintaining code quality, preventing regressions, and ensuring reliability.
+
+**Before Writing Tests:**
+
+*   **Understand the Feature:** Consult the relevant feature documentation under `.cursor/rules/features/` (e.g., `@features/accounts`) to understand the requirements and expected behavior.
+*   **Check the API:** Review the API specification, typically available via Swagger/OpenAPI docs (e.g., at `http://localhost:8080/api-docs/openapi.json`), to understand endpoint paths, methods, expected request bodies, and responses.
+
+## 1. Unit vs. Integration Tests
+
+Understanding the distinction between unit and integration tests is key:
+
+### 1.1. Unit Tests
+
+-   **Purpose:** Test individual components (functions, methods, modules) in isolation.
+-   **Location:** Typically reside within `#[cfg(test)] mod tests { ... }` modules in the same file as the code under test (e.g., `src/services/account.rs`).
+-   **Dependencies:** **MUST NOT** interact with external services (databases, network APIs, file system, etc.). Dependencies like repositories MUST be mocked.
+-   **Goal:** Verify the logic of a single unit quickly and reliably.
+
+### 1.2. Integration Tests
+
+-   **Purpose:** Test the interaction between multiple components or the interaction of the application with external systems (databases, etc.).
+-   **Location:** Reside in the `src/tests/` directory (e.g., `src/tests/account.rs`).
+-   **Dependencies:** ARE ALLOWED (and often expected) to connect to external services. These tests **MUST** use **Testcontainers** ([https://rust.testcontainers.org/](mdc:https:/rust.testcontainers.org), [GitHub](mdc:https:/github.com/testcontainers/testcontainers-rs)) to manage external dependencies (like databases) via Docker. This ensures consistent, isolated, and ephemeral environments for each test run.
+-   **Goal:** Verify that different parts of the application work together correctly and that the application integrates properly with its external dependencies in a controlled environment.
+
+## 2. Repository Testing & Mocks
+
+Repositories (`src/infrastructure/repositories/`) encapsulate data access logic.
+
+-   **Mock Implementation:** Every repository implementation **MUST** provide a mock implementation suitable for **unit testing** services. This mock should implement the corresponding domain repository trait (`src/domain/repositories/`).
+-   **Location:** The mock implementation should be placed within a `#[cfg(test)] pub mod mock { ... }` block inside the repository implementation file itself.
+
+**Example (`src/infrastructure/repositories/account.rs`):**
+
+```rust
+// ... Real implementation ...
+
+#[cfg(test)]
+pub mod mock {
+    use tokio::sync::Mutex;
+    use async_trait::async_trait;
+    use crate::domain::models::account::{Account, CreateAccount};
+    use crate::domain::repositories::account::{AccountRepository, FindByCol};
+    use crate::domain::repositories::repository::RepositoryResult;
+    // Potentially use std::collections::HashMap or Vec to simulate data store
+
+    pub struct AccountRepositoryImpl {
+        // Example: Use a Mutex-protected Vec to simulate the DB table
+        pub accounts: Mutex<Vec<Account>>,
+    }
+
+    #[async_trait]
+    impl AccountRepository for AccountRepositoryImpl {
+        async fn is_account(&self, email: &str) -> RepositoryResult<bool> {
+            let accounts = self.accounts.lock().await;
+            Ok(accounts.iter().any(|a| a.email == email))
+        }
+
+        async fn signup(&self, account: CreateAccount) -> RepositoryResult<Account> {
+            let mut accounts = self.accounts.lock().await;
+            let new_id = format!("mock_id_{}", accounts.len() + 1);
+            let acc = Account {
+                id: new_id,
+                name: account.name.to_owned(),
+                email: account.email.to_owned(),
+                password: account.password.to_owned(), // Note: Real tests should hash
+            };
+            accounts.push(acc.clone());
+            Ok(acc)
+        }
+
+        async fn find_one(&self, column: FindByCol) -> RepositoryResult<Option<Account>> {
+            let accounts = self.accounts.lock().await;
+            match column {
+                FindByCol::Email(email) => {
+                    Ok(accounts.iter().find(|a| a.email == email).cloned())
+                }
+                // Handle other FindByCol variants if necessary
+            }
+        }
+    }
+}
+```
+
+## 3. Service Testing
+
+Services (`src/services/`) contain the core business logic.
+
+-   **Test Type:** Services should primarily be **unit-tested**.
+-   **Dependencies:** Use the mock implementations of repositories (and any other dependencies) injected into the service instance.
+-   **`rstest`:** The `rstest` crate ([https://github.com/la10736/rstest](mdc:https:/github.com/la10736/rstest)) is highly recommended for service tests to manage fixtures (like the mocked repository) and parameterize test cases.
+
+**Example (`src/services/account.rs`):**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::repositories::account::mock::AccountRepositoryImpl as MockAccountRepo;
+    use crate::domain::models::account::Account;
+    use tokio::sync::Mutex;
+    use std::sync::Arc;
+    use rstest::*;
+
+    // rstest fixture to provide a mock repository wrapped in Arc
+    #[fixture]
+    fn mock_repo() -> Arc<dyn AccountRepository> {
+        Arc::new(MockAccountRepo {
+            accounts: Mutex::new(vec![Account {
+                id: "mock_id_1".to_string(),
+                name: "Existing User".to_string(),
+                email: "test@example.com".to_string(),
+                // Store hashed password in mock for realistic signin tests
+                password: encrypt_password("password123").unwrap(),
+            }]),
+        })
+    }
+
+    // rstest fixture to provide the service instance with the mocked repo
+    #[fixture]
+    fn service(mock_repo: Arc<dyn AccountRepository>) -> AccountServiceImpl {
+        AccountServiceImpl::new(mock_repo)
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_signup_success(service: AccountServiceImpl) {
+        let result = service.signup(CreateAccount {
+            name: "New User".to_string(),
+            email: "new@example.com".to_string(),
+            password: "newPassword456".to_string(),
+        }).await;
+        assert!(result.is_ok());
+        let account = result.unwrap();
+        assert_eq!(account.email, "new@example.com");
+        // Verify password was hashed (implementation detail of signup)
+        assert_ne!(account.password, "newPassword456");
+    }
+
+    // ... other service tests ...
+}
+```
+
+## 4. Controller Testing
+
+Controllers (`src/api/controllers/`) handle incoming HTTP requests, validate input, and delegate to services.
+
+-   **Test Focus:** Controller tests should primarily focus on **sad paths that do not require hitting the service layer or database**. The goal is to test the controller's handling of requests *before* they reach the business logic.
+-   **Examples:**
+    *   **DTO Validation:** Test invalid request bodies based on validation rules in DTOs (`src/api/dto/`). Check for missing fields, incorrect types, format violations (e.g., invalid email using `validator`), length constraints, etc.
+    *   **Authentication/Authorization:** Test endpoints that require authentication when no valid token is provided (if this check happens before service calls).
+    *   **Malformed Requests:** Test invalid JSON, incorrect content types, etc.
+-   **Tools:** Use `actix_web::test` utilities (`TestRequest`, `init_service`). See Actix Web Testing docs.
+
+**Example (`src/api/controllers/account.rs`):**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use actix_web::{
+        App,
+        http::StatusCode,
+        test::{self, TestRequest}, web,
+    };
+    use serde_json::json;
+    use super::*;
+    use crate::api::middlewares::validate::Json; // Assuming custom JSON extractor for validation
+
+    // Minimal Error struct for demonstration if ApiErrorResponse is complex
+    #[derive(serde::Deserialize, Debug)]
+    struct SimpleError { message: String }
+
+    // Helper to setup the app for testing just the routes
+    // No real services/dependencies needed for these tests
+    async fn setup_test_app() -> impl actix_web::dev::Service<actix_http::Request, Response = actix_web::dev::ServiceResponse, Error = actix_web::Error> {
+        test::init_service(
+            App::new()
+                 .configure(routes) // Assuming routes configures signup/signin
+        ).await
+    }
+
+    #[actix_web::test]
+    async fn test_signup_missing_email() {
+        let app = setup_test_app().await;
+        let res = TestRequest::post()
+            .uri("/signup") // Use the actual path from your routes/Swagger
+            .set_json(json!({
+                "name": "Test User",
+                "password": "Password123!"
+            }))
+            .send_request(&app)
+            .await;
+
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let err_body = test::read_body(res).await;
+        let err_text = String::from_utf8_lossy(&err_body);
+        // Check based on how Actix/Serde reports missing fields
+        assert!(err_text.contains("missing field `email`"));
+    }
+
+    #[actix_web::test]
+    async fn test_signup_invalid_email_format() {
+        let app = setup_test_app().await;
+        let res = TestRequest::post()
+            .uri("/signup") // Use the actual path
+            .set_json(json!({
+                "name": "Test User",
+                "email": "not-an-email",
+                "password": "Password123!"
+            }))
+            .send_request(&app)
+            .await;
+
+        // Status code depends on validation implementation (400 or 422)
+        assert!(res.status() == StatusCode::UNPROCESSABLE_ENTITY || res.status() == StatusCode::BAD_REQUEST);
+        let err_body = test::read_body(res).await;
+        let err_text = String::from_utf8_lossy(&err_body);
+        // Check message from `validator` or custom validation logic
+        assert!(err_text.contains("email") || err_text.contains("Invalid email format"));
+    }
+
+    // ... other controller validation tests ...
+}
+```
+
+## 5. Using `rstest`
+
+-   **Purpose:** `rstest` ([https://github.com/la10736/rstest](mdc:https:/github.com/la10736/rstest)) is a fixture-based test framework that significantly simplifies writing parameterized tests and managing test setup (fixtures).
+-   **When to Use:** Use `rstest` when:
+    *   You need to run the same test logic with multiple different inputs (parameterization).
+    *   You need complex setup logic that can be encapsulated in reusable fixtures (like setting up mock dependencies for services, or setting up `TestContext` for integration tests).
+    *   It makes the tests cleaner and more maintainable compared to manual setup and looping.
+-   **See Also:** The Service Testing section (Section 3) and Integration Test Examples (Section 6) show practical examples using `rstest` fixtures.
+
+## 6. Integration Test Examples (`src/tests/`)
+
+Integration tests verify the end-to-end functionality, often involving database interaction managed by Testcontainers.
+
+-   **Setup:** They require creating the full application instance with dependencies configured to connect to the services started by Testcontainers.
+-   **`TestContext`:** A common pattern is to have a `TestContext` struct (potentially in `src/tests/utils/` or `src/tests/mod.rs`) that holds handles to the Testcontainers containers (e.g., the database container), connection details (like dynamic ports), and the dependency injection container configured for the test environment.
+-   **`rstest` & `#[awt]`:** `rstest`'s `#[awt]` macro is useful for async fixtures, like setting up the `TestContext` which involves starting containers.
+
+**Example Snippet (conceptual, integrating Testcontainers):**
+
+```rust
+// In src/tests/mod.rs or src/tests/utils.rs
+use std::sync::Arc;
+use testcontainers::{clients, images, Docker}; // Import testcontainers
+use testcontainers::runners::AsyncRunner; // Use AsyncRunner for async tests
+// Assuming DI Container struct and AppConfig exist
+use crate::container::Container;
+use crate::config::AppConfig;
+
+// Placeholder for the actual SurrealDB testcontainers module/image
+// Replace with the correct type, e.g., testcontainers_modules::surrealdb::SurrealDb
+struct PlaceholderDbImage;
+impl images::Image for PlaceholderDbImage {
+    fn name(&self) -> &str { "surrealdb/surrealdb" } // Example name
+    fn tag(&self) -> &str { "latest" }
+    fn ready_conditions(&self) -> Vec<testcontainers::core::WaitFor> {
+        // Add appropriate wait conditions for SurrealDB
+        vec![testcontainers::core::WaitFor::StdErrMessage { message: "Started listener".into() }]
+     }
+}
+
+
+pub struct TestContext<'a> {
+    pub container: Arc<Container>,
+    // Hold the container instance to ensure it lives as long as the context
+    _db_container: testcontainers::ContainerAsync<PlaceholderDbImage>,
+    // Store connection details obtained from the container
+    pub db_connection_string: String,
+    // Docker client handle
+    _docker_client: &'a clients::Cli,
+}
+
+// Fixture to create the context before each test using rstest
+use rstest::*;
+
+#[fixture]
+#[awt] // Requires rstest async feature
+pub async fn context() -> TestContext<'static> {
+    // Use leaked static client for simplicity in example, or manage client lifecycle appropriately
+    static DOCKER_CLIENT: std::sync::OnceLock<clients::Cli> = std::sync::OnceLock::new();
+    let docker_client = DOCKER_CLIENT.get_or_init(|| clients::Cli::default());
+
+    let db_image = PlaceholderDbImage;
+
+    // Start the container using Testcontainers AsyncRunner
+    let db_container = db_image.start().await.expect("Failed to start DB container");
+
+    // Get dynamic connection details (e.g., port 8000 for SurrealDB WS)
+    let db_port = db_container.get_host_port_ipv4(8000).await.expect("Failed to get DB port");
+    let db_connection_string = format!("ws://localhost:{}", db_port);
+
+    // Create AppConfig with the dynamic connection string
+    // let mut config = AppConfig::test_config(); // Assume a helper for test config
+    // config.database.url = db_connection_string.clone();
+
+    // Create DI container with the test configuration
+    // let app_container = Arc::new(Container::new(&config).await.expect("Failed to create DI container"));
+    let app_container = Arc::new(Container::mock()); // Placeholder: Use actual test DI setup
+
+    TestContext {
+        container: app_container,
+        _db_container: db_container,
+        db_connection_string,
+        _docker_client: docker_client,
+    }
+}
+
+
+// In src/tests/account.rs (Example Integration Test)
+use actix_web::{test, App, http::StatusCode, web};
+use rstest::*;
+use serde_json::json;
+use crate::app::configure_app; // Assuming main app configuration function
+use crate::tests::context; // Import the async context fixture
+// Assuming an Account struct exists for deserialization
+#[derive(serde::Deserialize, Debug)]
+struct Account { name: String, email: String }
+
+#[rstest]
+#[awt]
+#[actix_web::test]
+async fn test_success_signup_integration(#[future] context: TestContext<'static>) { // Use #[future] with #[awt]
+    // Initialize the full Actix app with the DI container from the context
+    let app_container = context.container.clone();
+    let app = test::init_service(
+        App::new().configure(|cfg| configure_app(cfg, app_container)) // Use your app config function
+    ).await;
+
+    let res = TestRequest::post()
+        .uri("/api/v1/accounts/signup") // Use actual endpoint from Swagger/routes
+        .set_json(json!({
+            "name": "Integration Test User",
+            "email": "integ-test@example.com",
+            "password": "StrongPassword123!"
+        }))
+        .send_request(&app)
+        .await;
+
+    assert_eq!(res.status(), StatusCode::OK); // Or CREATED (201) depending on your handler
+
+    let account: Account = test::read_body_json(res).await;
+    assert_eq!(account.name, "Integration Test User");
+    assert_eq!(account.email, "integ-test@example.com");
+
+    // Testcontainers automatically cleans up the container when _db_container goes out of scope
+}
+```
+
+## 7. Test Execution
+
+-   **Runner:** It is strongly recommended to use **`cargo nextest`** ([https://nexte.st/](mdc:https:/nexte.st)) as the test runner.
+-   **Why:** `cargo nextest` offers significant advantages over the default `cargo test` runner, including faster execution, better UI, robust handling, and advanced features. See nextest docs for details.
+-   **Command:** Run tests and generate coverage using:
+    ```bash
+    cargo llvm-cov --lcov nextest
+    ```
+    Or execute an specific test:
+    ```bash
+    cargo llvm-cov --lcov nextest run test_signin
+    ```
+
+### 7.1. Analyzing Coverage
+
+After running the tests with coverage, analyze the output to identify areas of the code not covered by tests.
+
+*   **Viewing the Report:** Lcov report is printed to the terminal stdout.
+*   **Identify Gaps:** Look for lines or code branches marked as uncovered.
+*   **Improve Tests:** Write additional unit or integration tests to cover these gaps, ensuring critical logic and edge cases are tested.
+
+Remember to configure your test environment properly (e.g., environment variables for Testcontainers if needed) to avoid interfering with development or production environments.

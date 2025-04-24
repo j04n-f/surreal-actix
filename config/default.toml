@@ -1,0 +1,18 @@
+[service]
+name = "surreal-actix"
+
+[logging]
+level = "info"
+
+[surrealdb]
+host = "127.0.0.1"
+port = 8000
+username = "root"
+password = "root"
+namespace = "dev"
+database = "dev"
+migration = true
+
+[jsonwebtoken]
+public_keyfile = "config/public_key.pem"
+private_keyfile = "config/private_key.pem"

@@ -1,0 +1,31 @@
+services:
+  api:
+    image: surreal-actix:latest
+    environment:
+      - RUST_ENV=docker
+    volumes:
+      - ./config:/config
+    ports:
+      - 8080:8080
+    depends_on:
+      - surrealdb
+
+  surrealdb:
+    image: surrealdb/surrealdb:v2.2.1
+    entrypoint:
+      - /surreal
+      - start
+      - --user
+      - root
+      - --pass
+      - root
+    ports:
+      - 8000:8000
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - 6831:6831/udp
+      - 6832:6832/udp
+      - 16686:16686
+      - 4317:4317

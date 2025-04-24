@@ -1,0 +1,118 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Rust & Actix-web Development Best Practices
+
+This document outlines best practices for writing clean, maintainable, and robust Rust code, with a specific focus on Actix-web applications. It merges principles from general clean code, code quality, Rust idioms, and Actix-web conventions.
+
+## I. General Principles (Clean Code & Quality)
+
+### Readability & Naming
+*   **Meaningful Names:** Choose clear, descriptive names for variables, functions, types, modules, and crates. Follow Rust's naming conventions (`snake_case` for variables/functions, `PascalCase` for types/traits).
+*   **Consistency:** Maintain a consistent coding style throughout the project. Use `rustfmt` to enforce formatting automatically.
+
+### Simplicity & Design
+*   **Small Functions/Methods:** Keep functions and methods focused on a single responsibility (Single Responsibility Principle - SRP). Aim for smaller, understandable units of code. The Onion Architecture described in `@project-structure.mdc` aids this via clear layer responsibilities.
+*   **DRY (Don't Repeat Yourself):** Avoid duplicating code. Use functions, modules, traits, generics, or macros to abstract common logic. The layered structure encourages placing logic in the correct, reusable layer.
+*   **KISS (Keep It Simple, Stupid):** Prefer simpler solutions over complex ones unless the complexity is justified by performance or functional requirements.
+*   **YAGNI (You Ain't Gonna Need It):** Avoid adding functionality or abstractions before they are necessary.
+
+### Comments & Documentation
+*   **Comment Why, Not What:** Explain the intent, purpose, or complex logic behind the code, not just what the code *does*. Well-named code often reduces the need for comments.
+*   **Doc Comments (`///` or `//!`):** Document all public APIs (functions, structs, enums, traits, modules) using Rust's documentation comments. Use `cargo doc` to generate documentation. Explain usage, parameters, return values, errors, and provide examples.
+
+### Dependencies
+*   **Minimize Dependencies:** Be mindful of the dependencies you add. Prefer the standard library where possible. Regularly review and update dependencies (`cargo update`) and audit them for security vulnerabilities (`cargo audit`).
+
+## II. Rust Best Practices
+
+### Ownership, Borrowing & Lifetimes
+*   **Understand the Model:** Deeply understand Rust's ownership, borrowing, and lifetime rules. This is fundamental to writing safe and efficient Rust code.
+*   **Avoid Unnecessary `clone()`:** Cloning can impact performance. Prefer borrowing (`&` or `&mut`) whenever possible. Use `clone()` intentionally when ownership transfer is required.
+*   **Use Lifetimes Explicitly When Needed:** While the compiler often infers lifetimes, understand how to specify them explicitly when required, especially in complex function signatures or structs containing references.
+
+### Error Handling
+*   **Embrace `Result` and `Option`:** Use `Result<T, E>` for recoverable errors and `Option<T>` for optional values. Avoid panicking (`panic!`) in library code or for expected error conditions. Panics should generally be reserved for unrecoverable states or programming errors.
+*   **Use the `?` Operator:** Leverage the `?` operator for concise error propagation within functions returning `Result` or `Option`.
+*   **Define Custom Error Types:** Create specific, meaningful error types (enums or structs) for your libraries or applications. Implement the `std::error::Error` trait for better integration and context. Consider using crates like `thiserror` or `anyhow` for ergonomic error handling.
+
+### Types, Traits & Generics
+*   **Leverage the Type System:** Use strong typing to enforce invariants at compile time. Define custom types (structs, enums) to represent domain concepts accurately.
+*   **Use Traits for Abstraction:** Define behavior using traits. Prefer trait bounds over concrete types in function signatures where polymorphism is desired.
+*   **Employ Generics Wisely:** Use generics to write reusable code that works with multiple types, but avoid over-generalization.
+
+### Concurrency
+*   **Prefer `async/await`:** Use Rust's `async/await` syntax for non-blocking I/O operations.
+*   **Understand `Send` and `Sync`:** Be aware of the `Send` and `Sync` marker traits when sharing data between threads or async tasks.
+*   **Use Appropriate Synchronization Primitives:** Use `Arc` for shared ownership across threads/tasks and `Mutex` or `RwLock` for interior mutability when needed. Be mindful of potential deadlocks.
+
+### Idiomatic Rust & Tooling
+*   **Use `clippy`:** Regularly run `cargo clippy` and address its lints. Clippy catches common mistakes and suggests more idiomatic code. Configure `clippy.toml` for project-specific needs.
+*   **Pattern Matching:** Utilize pattern matching (`match`, `if let`, `while let`) for exhaustive checks and destructuring enums and structs.
+*   **Iterators:** Prefer using iterators and their adapters (`map`, `filter`, `fold`, etc.) over manual loops where it improves clarity and conciseness.
+*   **Modules and Crates:** Organize code logically into modules (`mod`) and crates. Follow standard project layout conventions.
+*   **Avoid `unsafe`:** Use `unsafe` blocks only when absolutely necessary and clearly justified (e.g., FFI, specific low-level optimizations). Clearly document the invariants required for the `unsafe` block to be sound.
+
+## III. Actix-web Best Practices
+
+Adherence to the project structure defined in `@project-structure.mdc` is crucial for maintaining consistency and leveraging the benefits of the Onion Architecture. These guidelines explain how to work effectively *within* that structure.
+
+### Application Structure
+*   **Modular Design:** Organize your application according to the defined Onion Architecture, detailed in `@project-structure.mdc`. Key layers within `src/` include `domain` (core logic/entities), `services` (use case orchestration), `infrastructure` (database connections, external clients, concrete implementations), and `api` (Actix handlers/routes/DTOs). Refer to `@project-structure.mdc` for the specific responsibilities of each layer.
+*   **Configuration:** Load configuration from environment variables or configuration files (e.g., using crates like `figment`). This is typically handled in `src/config.rs` and initialized in `src/main.rs`. Avoid hardcoding configuration values.
+*   **Routing:** Define routes clearly within the `src/api/controllers` layer, often grouped by resource (e.g., `src/api/controllers/users.rs`, `src/api/controllers/products.rs`). Configure routes within Actix Web in `src/app.rs`, referencing handlers from the `api` layer. Use `web::scope()` for grouping related routes.
+
+### Handlers
+*   **Asynchronous Handlers:** All handlers in `src/api/` performing I/O (which typically involves calling the `services` layer that might interact with `infrastructure`) *must* be `async fn`.
+*   **Extractors:** Utilize Actix-web's extractors (`Path`, `Query`, `Json`, `Data`, `Form`, etc.) within `src/api/` handlers to cleanly access request data. Implement `FromRequest` for custom extraction logic if needed, placing this logic within the `api` layer.
+*   **Keep Handlers Thin:** Handlers, located in `src/api/`, should primarily focus on request/response handling: parsing incoming requests, validating request format (not business rules), invoking the appropriate application service in `src/services/`, handling service errors, and mapping results (domain objects or simple results from services) to API responses (DTOs). Avoid putting business rules or direct infrastructure access (e.g., database queries) in handlers.
+*   **Explicit Return Types:** Use explicit `Result<HttpResponse, YourApiErrorType>` or `impl Responder` return types for handlers in `src/api/`. Errors should ideally be specific API-level errors, potentially converted from service or domain layer errors.
+*   **Endpoint Documentation & Verification:** Document all API endpoints thoroughly using Rust doc comments compatible with OpenAPI generation tools (e.g., `utoipa`). After implementation, verify the documentation is accurately generated and reflects the endpoint's behavior by checking the Swagger UI or the raw OpenAPI JSON (e.g., `http://localhost:8080/api-docs/openapi.json`).
+
+### State Management
+*   **Shared State (`AppData`):** Use `web::Data` to share application state immutably across handlers. This state, such as database connection pools (initialized in `infrastructure`) or application services instances (from `services`), is typically constructed in `src/container.rs` (the Dependency Injection container) and added to the `App` in `src/main.rs` or `src/app.rs`. Ensure the shared state is `Send + Sync`. For mutable shared state, use appropriate interior mutability patterns (e.g., `Arc<Mutex<T>>`) managed within the DI container.
+*   **Per-Request State:** Use request extensions (`req.extensions_mut()`) for data specific to a single request lifecycle, often managed by middleware defined within the `api` layer or a shared `middleware` module.
+
+### Error Handling in Actix
+*   **Custom Error Types:** Define application-specific error types. Consider defining errors close to their origin: domain errors in `src/domain`, service errors in `src/services`, infrastructure errors in `src/infrastructure`, and API/request validation errors in `src/api`. Implement `actix_web::ResponseError` for error types returned directly from `src/api` handlers. This allows Actix to automatically convert your API errors into appropriate HTTP responses.
+*   **`ResponseError` Implementation:** Ensure your API error types' `ResponseError` implementation returns a suitable `status_code()` and `error_response()`. The response body should ideally be structured (e.g., JSON using a consistent error DTO defined in `api`) for client consumption. Service layer errors might need to be mapped to specific API errors within the handlers.
+*   **Centralized Error Handling (Optional):** Consider middleware (within `api` or shared) for logging errors or transforming them consistently before they reach the client, although implementing `ResponseError` on API error types is the primary mechanism.
+
+### Middleware
+*   **Use Middleware Appropriately:** Employ middleware for cross-cutting concerns like logging, authentication, authorization, CORS handling, request compression, and modifying requests/responses.
+*   **Ordering:** Be mindful of middleware execution order.
+
+### Security
+*   **Input Validation:** Rigorously validate all incoming data (path parameters, query strings, request bodies) using extractors and validation libraries (e.g., `validator`). Do not trust client input.
+*   **Authentication & Authorization:** Implement robust authentication and authorization mechanisms, often using middleware. Store secrets securely.
+*   **HTTPS:** Always use HTTPS in production.
+*   **Rate Limiting:** Implement rate limiting to prevent abuse.
+*   **Security Headers:** Set appropriate security headers (e.g., `Content-Security-Policy`, `X-Content-Type-Options`).
+*   **Dependency Audits:** Regularly run `cargo audit` to check for vulnerabilities in dependencies.
+
+## IV. Testing
+
+### General
+*   **Adopt Test-Driven Development (TDD):** Prioritize writing tests *before* implementing the corresponding feature or fix. Write a failing test that defines the desired behavior, then write the minimum code required to make the test pass. Refactor as needed. Run `cargo llvm-cov --lcov nextest` frequently throughout this cycle.
+*   **Write Tests:** Aim for good test coverage across all layers (`domain`, `services`, `infrastructure`, `api`).
+*   **Testable Code:** Design code with testability in mind. The Onion Architecture and Dependency Injection (`src/container.rs`) greatly facilitate this by allowing layers to be tested independently with mocked dependencies.
+*   **Manual Verification:** After implementation and all automated tests pass, manually verify the relevant application functionality works as expected (e.g., using `cargo run` and interacting with the API).
+
+### Rust Testing
+*   **Unit Tests:** Place unit tests in a `#[cfg(test)] mod tests { ... }` block within the same file or module they test.
+    *   Test `src/domain` logic in complete isolation. Domain entities and value objects should be tested based on their intrinsic logic.
+    *   Test `src/services` use cases by providing mock implementations of the traits they depend on (usually defined in `domain` or `services` and implemented in `infrastructure`).
+    *   Test `src/infrastructure` components by mocking external systems (like databases or APIs) if necessary, or by testing against test instances of those systems.
+*   **Integration Tests:** Place integration tests in the root `tests/` directory. These test the integration between layers, often focusing on the API endpoints.
+
+### Actix-web Testing
+*   **Unit Test Handlers:** You can unit test handler logic in `src/api/` by constructing mock request parts and calling the handler function directly, providing mocked `services` dependencies.
+*   **Integration Test Services/API:** Use `actix_web::test` module utilities (`init_service`, `TestRequest`) within the root `tests/` directory to perform integration tests against your API endpoints. Initialize the Actix `App` using a test-specific DI container setup (potentially swapping real infrastructure components for mocks or test doubles). Test routing, extractors, request validation, status codes, and response bodies.
+*   **Mock Dependencies:** Use mocking libraries (like `mockall`) or hand-rolled test doubles to implement mock versions of traits defined in `domain` or `services` for testing `services` or `api` layers in isolation. The DI container (`src/container.rs`) structure should make injecting mocks relatively straightforward for tests.
+
+## V. Continuous Integration & Deployment (CI/CD)
+
+*   **Automate Checks:** Set up CI pipelines to automatically run `cargo check`, `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo llvm-cov --lcov nextest`, and `cargo audit` on every commit/PR.
+*   **Automate Builds & Deployment:** Automate the build and deployment process to ensure consistency and reduce manual errors. Consider containerization (e.g., Docker).

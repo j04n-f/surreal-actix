@@ -1,0 +1,267 @@
+---
+description:
+globs: **/*.rs,**/*.surql
+alwaysApply: false
+---
+# SurrealDB Migration & Usage Guidelines
+
+This document outlines the process for managing SurrealDB database schema and data migrations using the `surrealdb-migrations` crate and provides guidance on interacting with the database using the `surrealdb` Rust SDK within the application.
+
+**Key Resources:**
+-   **Migration Tool:** [`surrealdb-migrations`](mdc:https:/github.com/Odonno/surrealdb-migrations) (GitHub Repo & CLI)
+-   **SurrealDB Docs:** [Official SurrealDB Documentation](mdc:https:/surrealdb.com/docs)
+-   **SurrealDB Rust SDK:** [`surrealdb` crate](mdc:https:/docs.rs/surrealdb/latest/surrealdb)
+
+## 1. Migrations (`surrealdb-migrations` CLI)
+
+We use the `surrealdb-migrations` CLI tool to manage database schema changes and data seeding.
+
+### 1.1. Location
+
+All migration files (`.surql`) **must** reside in the `migrations/` directory
+
+PROJECT_ROOT/
+├── migrations/
+│ ├── 20230101_100000_initial_schema.up.surql
+│ ├── 20230101_100000_initial_schema.down.surql
+│ └── ...
+└── src/
+└── ...
+
+### 1.2. Creating Migrations
+
+-   **Generate new migration files:** Use descriptive names. Generating `up` and `down` files together is recommended.
+    ```bash
+    # Example: surrealdb-migrations create add_product_table --down
+    surrealdb-migrations create <MIGRATION_NAME> --down
+    ```
+-   **Edit the `.surql` files:** Implement your changes.
+
+    **Example (`..._add_product_table.up.surql`):**
+    ```surql
+    -- Define the product table with schema enforcement
+    DEFINE TABLE product SCHEMAFULL;
+
+    -- Define fields for the product table
+    DEFINE FIELD name ON TABLE product TYPE string;
+    DEFINE FIELD description ON TABLE product TYPE option<string>;
+    DEFINE FIELD price ON TABLE product TYPE decimal ASSERT $value > 0;
+    DEFINE FIELD created_at ON TABLE product TYPE datetime VALUE $value OR time::now();
+    DEFINE FIELD updated_at ON TABLE product TYPE datetime VALUE time::now();
+
+    -- Add an index for faster name lookups
+    DEFINE INDEX product_name_idx ON TABLE product COLUMNS name UNIQUE;
+    ```
+
+    **Example (`..._add_product_table.down.surql`):**
+    ```surql
+    -- Remove the index first (if it exists)
+    REMOVE INDEX product_name_idx ON TABLE product;
+
+    -- Remove the fields (optional, depends on desired rollback state)
+    -- You might choose to leave fields if data could still be useful or if removal is complex.
+    -- REMOVE FIELD name ON TABLE product;
+    -- REMOVE FIELD description ON TABLE product;
+    -- REMOVE FIELD price ON TABLE product;
+    -- REMOVE FIELD created_at ON TABLE product;
+    -- REMOVE FIELD updated_at ON TABLE product;
+
+    -- Remove the table
+    REMOVE TABLE product;
+    ```
+
+### 1.3. Applying Migrations
+
+-   **Apply all pending migrations:**
+    ```bash
+    surrealdb-migrations apply
+    ```
+-   **Revert migrations:**
+    ```bash
+    # Revert to state before <MIGRATION_ID> (use the timestamp prefix)
+    # Example: surrealdb-migrations apply --down 20230101_100000_initial_schema
+    surrealdb-migrations apply --down <MIGRATION_ID>
+
+    # Revert all migrations
+    surrealdb-migrations apply --down 0
+    ```
+
+### 1.4. Migration Best Practices
+
+-   **Keep Migrations Small & Focused:** Each migration should represent a single, atomic, logical change. Avoid combining unrelated schema modifications.
+-   **Descriptive Naming:** Use clear, sequential names (the tool adds timestamps, but use names like `add_user_email_verification`, `create_orders_table`).
+-   **Always Create & Test Down Migrations:** Ensure every change can be reliably reversed. Run `apply --down <id>` locally to test rollback before committing.
+-   **Never Edit Applied Migrations:** Once a migration is applied (especially in shared environments like `staging` or `main`), create a *new* migration to correct or modify it. Modifying history causes inconsistencies.
+-   **Idempotency:** Write migration steps (especially data manipulation) to be safe to run multiple times without unintended side effects, although the tool prevents re-running applied `up` migrations.
+-   **Consider Performance:** For large tables, adding indexes or altering columns can lock tables. Plan accordingly, potentially running migrations during low-traffic periods.
+-   **Schema Definitions:** Use `SCHEMAFULL` where possible to enforce structure. Use `DEFINE FIELD ... ASSERT` for basic validation at the database level.
+
+## 2. Critical Constraint: Authentication & Authorization
+
+**DO NOT USE SURREALDB USER MANAGEMENT OR RBAC.**
+
+This project implements all user authentication, authorization, and access control within the Rust application layer. **Do not** use SurrealDB's built-in features:
+-   `DEFINE SCOPE ... SESSION ...`
+-   `DEFINE TOKEN ... ON SCOPE ...`
+-   `DEFINE TABLE ... TYPE USER ...`
+-   `DEFINE FIELD ... PERMISSIONS ...` (Use application logic instead)
+
+Reliance on these features is **prohibited** in migrations or application code.
+
+-   **Application Code:** Handles all auth logic. Refer to:
+    -   `src/infrastructure/repositories/account.rs` (@account.rs)
+    -   `src/services/account.rs` (@account.rs)
+-   **Database Interactions:** Queries executed by the application assume sufficient privileges because access control is enforced *before* the query is sent to SurrealDB.
+
+## 3. Interacting with SurrealDB (Rust SDK)
+
+Use the official `surrealdb` Rust SDK for all application-level database operations (CRUD, queries, etc.). Migrations define the *schema*; the SDK interacts with the *data*.
+
+### 3.1. Setup (Example)
+
+Ensure you have a shared `Surreal<Client>` instance, typically managed via application state (e.g., `Arc` in Actix Web's `app_data`).
+
+```rust
+// Example connection setup (e.g., in main.rs or config module)
+use surrealdb::engine::remote::ws::Ws;
+use surrealdb::Surreal;
+use std::sync::Arc;
+
+// In your main function or state setup
+async fn setup_database() -> Result<Arc<Surreal<surrealdb::engine::any::Any>>, Box<dyn std::error::Error>> {
+    // Use Any engine for flexibility (Ws, TiKv, etc.) determined by connection string
+    // Ensure connection details (URL, user, pass, NS, DB) come from configuration, not hardcoded.
+    let db = Surreal::new::<Ws>("ws://localhost:8000").await?; // Example: Replace with config value
+    // Sign in (Credentials should come from secure config)
+    db.signin(surrealdb::opt::auth::Root {
+        username: "root", // Example: Replace with config value
+        password: "root", // Example: Replace with config value
+    }).await?;
+    // Select Namespace and Database (Names should come from config)
+    db.use_ns("your_namespace").use_db("your_database").await?; // Example: Replace with config values
+    Ok(Arc::new(db))
+}
+```
+
+### 3.2. Common Operations (Examples within a Repository)
+
+Assume `db: Arc<Surreal<impl surrealdb::engine::Engine + Send + Sync>>` is available in your repository struct (ensure `Send + Sync` for use across async tasks).
+
+```rust
+// --- Rust Models (e.g., in domain::entities or infrastructure::models) ---
+use serde::{Serialize, Deserialize};
+// Use Thing for record IDs. It's SurrealDB's representation of an ID (e.g., "product:xyz")
+// It's often aliased or similar to RecordId in examples.
+use surrealdb::sql::{Thing, Datetime};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Product {
+    // Use Option<Thing> for the ID, as it's present after creation/retrieval
+    // but not before creation.
+    pub id: Option<Thing>,
+    pub name: String,
+    pub price: f64, // Consider using Decimal types for precision
+    // Add other fields corresponding to your migration...
+    // Use SurrealDB's Datetime type if defined in the schema
+    pub created_at: Option<Datetime>,
+    pub updated_at: Option<Datetime>,
+}
+
+// For creation, ID is generated by the DB, so it's not included here.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateProduct {
+    pub name: String,
+    pub price: f64,
+}
+
+// --- Repository Implementation ---
+use surrealdb::{Surreal, Error as SurrealError};
+use std::sync::Arc;
+use serde_json::json; // For merge updates
+
+// Assuming RepositoryError is defined elsewhere, mapping SurrealError
+// use crate::domain::repositories::RepositoryError;
+
+const PRODUCT_TABLE: &str = "product";
+
+pub struct ProductRepositoryImpl {
+    // Engine needs to be Send + Sync for use across async tasks/threads
+    db: Arc<Surreal<impl surrealdb::engine::Engine + Send + Sync>>,
+}
+
+impl ProductRepositoryImpl {
+    pub fn new(db: Arc<Surreal<impl surrealdb::engine::Engine + Send + Sync>>) -> Self { Self { db } }
+
+    // --- Create ---
+    pub async fn create(&self, product_data: CreateProduct) -> Result<Product, SurrealError> {
+        // The create method returns the created record(s) as a Vec
+        let created_products: Vec<Product> = self.db
+            .create(PRODUCT_TABLE)
+            .content(product_data) // Use content() for the full data
+            .await?;
+        // Typically returns a single item unless batch creating. Use ok_or for better error handling.
+        created_products.into_iter().next()
+            .ok_or_else(|| SurrealError::Api(surrealdb::error::Api::CouldNotUnwrapOpt))
+    }
+
+    // --- Read (Single by ID) ---
+    // Accepts Thing directly. Ensure the caller constructs it correctly (e.g., Thing::from(("product", "some_id"))).
+    pub async fn get_by_id(&self, record_id: &Thing) -> Result<Option<Product>, SurrealError> {
+        let product: Option<Product> = self.db.select(record_id).await?;
+        Ok(product)
+    }
+
+    // --- Read (Multiple/Query with SurrealQL & Parameter Binding) ---
+    // ALWAYS use bind() for user input or variable data to prevent injection vulnerabilities.
+    pub async fn find_by_name_contains(&self, name_query: &str) -> Result<Vec<Product>, SurrealError> {
+        // Use $variable syntax in the query for parameters.
+        let sql = "SELECT * FROM type::table($table) WHERE name CONTAINS type::string($name);";
+        let mut response = self.db
+            .query(sql)
+            // Bind parameters securely using .bind()
+            .bind(("table", PRODUCT_TABLE))
+            .bind(("name", name_query))
+            .await?;
+        // Use .take(index) to deserialize the result of the specific statement (here, index 0).
+        let products: Vec<Product> = response.take(0)?;
+        Ok(products)
+    }
+
+    // --- Update (Partial using Merge) ---
+    // Merge is ideal for updating specific fields without fetching the whole record first.
+    pub async fn update_price(&self, record_id: &Thing, new_price: f64) -> Result<Option<Product>, SurrealError> {
+        // Use merge() with a JSON object representing the fields to change.
+        let updated_product: Option<Product> = self.db
+            .update(record_id)
+            .merge(json!({ "price": new_price })) // Use serde_json::json! macro
+            .await?;
+            // .merge() typically returns the updated document.
+            // .return_type() can be used if specific return behavior (Before, After, Diff, None) is needed.
+        Ok(updated_product)
+    }
+
+     // --- Update (Full replacement using Content) ---
+    // Be cautious with full updates; it replaces the entire record.
+    pub async fn replace_product(&self, record_id: &Thing, full_product_data: Product) -> Result<Option<Product>, SurrealError> {
+        // Use update().content() for full replacement.
+        // Note: The 'id' field in full_product_data will likely be ignored by content update,
+        // as the target record ID is already specified.
+        let updated_product: Option<Product> = self.db
+            .update(record_id)
+            .content(full_product_data) // Replaces the entire content
+            .await?;
+        Ok(updated_product)
+    }
+
+    // --- Delete ---
+    pub async fn delete(&self, record_id: &Thing) -> Result<Option<Product>, SurrealError> {
+        // Delete returns the record that was deleted.
+        let deleted_product: Option<Product> = self.db.delete(record_id).await?;
+        Ok(deleted_product)
+    }
+}
+```
+
+### 3.3. Running Migrations Programmatically (Use CLI Primarily)
+
+While the `surrealdb-migrations` crate *can* be used as a library (e.g., for embedded migrations in tests or specific deployment scenarios), the **CLI is the standard and recommended workflow** for development and deployment. If programmatic application is required, consult the `surrealdb-migrations` crate documentation directly for library usage patterns. Avoid running migrations automatically on application startup in production unless you have a robust leader election or locking mechanism to prevent multiple instances from running migrations concurrently.

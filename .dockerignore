@@ -1,0 +1,8 @@
+.cursor
+.git
+.gitignore
+.pre-commit-config.yaml
+.secrets.baseline
+docker-compose.yaml
+.surrealdb
+target

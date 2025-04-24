@@ -1,0 +1,135 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Project Structure: Onion Architecture
+
+This document outlines the project's structure, which follows the principles of Onion Architecture (also related to Clean Architecture and Hexagonal Architecture). This approach helps create maintainable, testable, and decoupled software.
+
+References:
+-   [Onion Architecture - Expedia Group Technology](mdc:https:/medium.com/expedia-group-tech/onion-architecture-deed8a554423)
+-   [Rust Actix Clean Architecture Example](mdc:https:/github.com/microsoft/cookiecutter-rust-actix-clean-architecture)
+
+## Core Principles
+
+1.  **The Domain is King:** The core of the application is the `domain` layer, containing business logic and entities, independent of external concerns like databases or UI.
+2.  **Dependency Rule:** Dependencies flow inwards. Outer layers (like Infrastructure) depend on inner layers (like Domain). Inner layers *never* depend on outer layers.
+3.  **Interfaces and Implementations:** Inner layers define interfaces (Rust traits), and outer layers provide concrete implementations. Dependency Injection is used to connect these at runtime (see `src/container.rs`).
+4.  **Separation of Concerns:** Each layer has a distinct responsibility.
+
+## Project Layers Diagram
+
+```plaintext
++---------------------------------------------------------------------+
+|                           Infrastructure                            |
+| +-------------------------+ +-------------------------------------+ |
+| |         api/            | |         infrastructure/             | |
+| | (Actix Handlers, Routes,| | (DB Repos, External Clients,        | |
+| |  Request/Response DTOs) | |  Concrete Logging/Telemetry Impl)   | |
+| +-------------------------+ +-------------------------------------+ |
+|         ^                         ^                                 |
+|         | Depends On              | Implements Interfaces From      |
+|         v                         v                                 |
+| +---------------------------------------------------------------------+
+|                         Application Services                          |
+| +---------------------------------------------------------------------+
+| |                         services/                                 |
+| |       (Use Cases, Orchestration, Application Logic Flow)          |
+| +---------------------------------------------------------------------+
+|         ^                         ^
+|         | Depends On              | Depends On
+|         v                         v
+| +---------------------------------------------------------------------+
+|                              Domain                                   |
+| +-------------------------+ +-------------------------------------+ |
+| |     domain/entities     | |     domain/services (Interfaces)    | |
+| | (Core Business Objects, | | (Business Rules, Logic Contracts)   | |
+| |  Value Objects, Aggregates) | |                                     | |
+| +-------------------------+ +-------------------------------------+ |
++---------------------------------------------------------------------+
+// Other supporting modules: main.rs, app.rs, container.rs, config.rs
+```
+
+## Project Structure
+
+```
+.
+├── .cursor/rules/          # Cursor AI rules for development guidelines
+├── .github/workflows/      # CI/CD workflows (e.g., rust.yml)
+├── config/                 # Application configurations
+├── migration/              # Database migration scripts
+├── src/                    # Source code (following Onion Architecture)
+│   ├── api/                # Actix-web layer (part of Infrastructure)
+│   │   ├── controllers/    # Request handlers
+│   │   ├── dto/            # Data Transfer Objects (request/response)
+│   │   └── middlewares/    # Request/response middleware
+│   ├── domain/             # Core domain layer (innermost layer)
+│   │   ├── entities/       # Core business objects, value objects, aggregates
+│   │   ├── models/         # Domain models
+│   │   ├── repositories/   # Repository interfaces (traits)
+│   │   ├── services/       # Domain service interfaces
+│   │   └── error.rs        # Domain-specific error types
+│   ├── infrastructure/     # Implementation of external concerns (outermost layer)
+│   │   ├── databases/      # Database connection and management
+│   │   ├── models/         # Infrastructure-specific models
+│   │   └── repositories/   # Concrete database repository implementations
+│   ├── services/           # Application services layer (use case orchestration)
+│   ├── tests/              # Integration tests (using Testcontainers)
+│   ├── app.rs              # Actix App configuration
+│   ├── config.rs           # Configuration loading
+│   ├── container.rs        # Dependency Injection container
+│   ├── main.rs             # Application entry point
+│   └── opentelemetry.rs    # Tracing/metrics setup
+├── .dockerignore
+├── .gitignore
+├── .pre-commit-config.yaml # Pre-commit hooks configuration
+├── .secrets.baseline       # Baseline for secret scanning
+├── .surrealdb              # SurrealDB configuration
+├── Cargo.lock
+├── Cargo.toml              # Project dependencies
+├── Dockerfile              # Container definition
+├── README.md               # Project documentation
+└── docker-compose.yaml     # Multi-container Docker setup
+```
+
+## Directory Responsibilities (`src/`)
+
+1.  **`domain/`**: The innermost layer.
+    *   **`domain/entities/` (or similar)**: Contains the core business entities, aggregates, and value objects. These should be plain Rust structs/enums with their intrinsic logic. They must *not* depend on any other layer.
+    *   **`domain/services/` (or interfaces within `domain/`)**: Defines traits (interfaces) for core business logic operations or repository access patterns needed by the domain itself. Contains domain-specific business rules that don't belong to a single entity.
+    *   **Dependencies:** None on other layers (`services`, `infrastructure`, `api`).
+
+2.  **`services/`**: The Application Services layer.
+    *   Orchestrates the application's use cases. It uses domain entities and calls methods defined by domain service interfaces or infrastructure interfaces.
+    *   Contains application-specific logic, coordinating tasks like data fetching, validation (using domain logic), and saving.
+    *   Defines traits (interfaces) for infrastructure components it needs (e.g., `UserRepository`, `NotificationService`).
+    *   Should not contain infrastructure details (like SQL queries or HTTP client logic).
+    *   **Dependencies:** Depends *only* on the `domain` layer.
+
+3.  **`infrastructure/`**: The outermost layer containing concrete implementations and external interactions.
+    *   Implements traits defined in `domain` or `services` (e.g., database repository implementations, external API clients, email services, concrete logging).
+    *   Contains code specific to external tools or technologies (e.g., SurrealDB specifics, `reqwest` client logic).
+    *   **Dependencies:** Can depend on `domain` and `services` (primarily to implement their traits). Should generally avoid depending directly on `api`.
+
+4.  **`api/`**: A specific part of the Infrastructure layer, responsible for the external API (e.g., Actix Web).
+    *   Contains request handlers, routing definitions, request/response data transfer objects (DTOs), and API-specific concerns like request validation (format, not business rules) and serialization.
+    *   Translates API requests into calls to the `services` layer.
+    *   Translates results from `services` (often domain objects or simple results) into API responses (DTOs).
+    *   **Dependencies:** Depends on `services`. May use types from `domain` if passed through `services`, but should prefer DTOs for its direct interface. Should *not* depend directly on `infrastructure` implementations (dependency injection handles this).
+
+5.  **Root (`src/`)**:
+    *   `main.rs`: Application entry point, sets up configuration, logging, dependency injection container, and starts the web server.
+    *   `app.rs`: Configures the Actix Web application (middleware, routes referencing `api` handlers).
+    *   `container.rs`: Responsible for Dependency Injection - creating instances of infrastructure implementations and wiring them into services.
+    *   `config.rs`: Handles loading and providing application configuration.
+    *   `opentelemetry.rs`: Configures tracing and metrics.
+    *   **Dependencies:** Ties all layers together; depends on `api`, `services`, `infrastructure`, `domain` as needed for setup.
+
+## Key Takeaways
+
+-   Keep business logic clean in `domain`.
+-   Orchestrate use cases in `services`.
+-   Handle external details in `infrastructure` and `api`.
+-   Follow the dependency rule strictly: `api` -> `services` -> `domain`.
+-   Use traits and dependency injection (`container.rs`) to decouple layers.

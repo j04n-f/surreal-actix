@@ -1,0 +1,76 @@
+---
+description:
+globs: **/*.rs
+alwaysApply: false
+---
+# DTO Validation Guidelines
+
+This document outlines the process for adding input validation to Data Transfer Objects (DTOs) within the `src/api/dto` module. We use the `validator` crate for this purpose.
+
+## Core Principles
+
+1.  **Crate:** Use the [`validator`](mdc:https:/github.com/Keats/validator) crate for all DTO validations.
+2.  **Location:**
+    *   Standard validation rules (using `#[derive(Validate)]` and attributes) for a specific DTO (e.g., `AccountDto`) should be defined directly within its struct definition, typically located in the `mod.rs` file of its corresponding module (e.g., `src/api/dto/account/mod.rs`).
+    *   Custom validation functions or shared validation logic should be placed in `src/api/dto/validation.rs`.
+3.  **Implementation:** Apply validations using the `Validate` derive macro and associated attributes provided by the `validator` crate (e.g., `length`, `email`, `url`, `range`, `required`).
+
+## Example (in `src/api/dto/account/mod.rs`)
+
+```rust
+use serde::{Deserialize, Serialize}; // Assuming Serde is used
+use crate::api::dto::validation::{is_email, is_name, is_password};
+use utoipa::ToSchema;
+use validator::Validate;
+
+#[derive(Debug, Validate, Deserialize, ToSchema)]
+pub struct CreateAccountDTO {
+    #[validate(custom(function = "is_name"))]
+    #[schema(examples("your_name"))]
+    pub name: String,
+
+    #[validate(custom(function = "is_email"))]
+    #[schema(examples("your@email.com"))]
+    pub email: String,
+
+    // Example referencing a custom validation function (defined in src/api/dto/validation.rs)
+    #[validate(custom(function = "is_password"))]
+    #[schema(examples("stR0ngP4ssw0rd!"))]
+    pub password: String,
+}
+
+// Although the `Validate` trait can be implemented manually for complex cases,
+// using `#[derive(Validate)]` with attributes is preferred for simplicity and consistency.
+```
+
+## Custom Validations (in `src/api/dto/validation.rs`)
+
+Place reusable or complex custom validation functions in `src/api/dto/validation.rs`. These functions must accept a reference to the type being validated and return `Result<(), validator::ValidationError>`.
+
+```rust
+// Example in src/api/dto/validation.rs
+use validator::ValidationError;
+
+// A hypothetical custom function
+pub fn validate_internal_code(code: &str) -> Result<(), ValidationError> {
+    if code.starts_with("INT-") && code.len() > 4 {
+        Ok(())
+    } else {
+        // Return ValidationError if invalid
+        let mut error = ValidationError::new("invalid_internal_code");
+        error.message = Some("Internal code must start with 'INT-' and have additional characters.".into());
+        Err(error)
+    }
+}
+
+// Example of the existing custom validator for optional email
+pub fn validate_optional_email(email: &Option<String>) -> Result<(), ValidationError> {
+    match email {
+        Some(e) => validator::validate_email(e),
+        None => Ok(()), // Allow None
+    }
+}
+
+```
+
+Refer to the [`validator` crate documentation](mdc:https:/docs.rs/validator/latest/validator) for a complete list of available validation attributes and advanced usage patterns.

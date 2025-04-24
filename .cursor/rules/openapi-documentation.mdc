@@ -1,0 +1,216 @@
+---
+description:
+globs: **/*.rs
+alwaysApply: false
+---
+# OpenAPI (Swagger) Documentation with Utoipa
+
+This document outlines the process for generating OpenAPI documentation for the Actix-web API using the `utoipa` suite of crates. Following these guidelines ensures consistent and accurate API documentation.
+
+**Key Crates:**
+-   [`utoipa`](mdc:https:/docs.rs/utoipa/latest/utoipa): Core library and macros (`#[derive(OpenApi)]`, `#[utoipa::path]`, `#[derive(ToSchema)]`, `#[derive(ToResponse)]`).
+-   [`utoipa-actix-web`](mdc:https:/docs.rs/utoipa-actix-web/latest/utoipa_actix_web): Provides integration helpers for Actix-web.
+-   [`utoipa-swagger-ui`](mdc:https:/docs.rs/utoipa-swagger-ui/latest/utoipa_swagger_ui): Serves the Swagger UI interface.
+
+**References:**
+-   `development-guide.mdc` (@development-guide): Contains guidelines on endpoint documentation and manual verification.
+-   `src/api/controllers/account.rs` (@account.rs): Example usage in account controller.
+-   `src/api/dto/` (@dto-validation): DTOs definitions often include `ToSchema`.
+
+## 1. Core Concepts
+
+### 1.1. `ApiDoc` Struct (`src/api/mod.rs` or `src/app.rs`)
+
+Define a central struct (conventionally named `ApiDoc`) that aggregates all paths and components (schemas, responses) for the OpenAPI specification.
+
+```rust
+// Example in src/api/mod.rs or a dedicated doc module
+use utoipa::OpenApi;
+use crate::api::controllers::{account}; // Import controller modules
+use crate::api::dto::{account::*}; // Import DTOs
+use crate::api::error::AppError; // Import custom error type if used in responses
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        // Account paths
+        account::signup,
+        account::signin,
+        // ... add other controller handler functions here
+    ),
+    components(
+        schemas(
+            // Account DTOs
+            AccountDTO, CreateAccountDTO, CredentialsDTO, AccessTokenDTO,
+            // Error Schema (if consistent error response)
+            AppError,
+            // ... add other DTOs used in request/response bodies
+        ),
+        // Optional: Reusable responses
+        // responses(
+        //    NotFound => AppError::example_404(), // Example
+        // )
+    ),
+    tags(
+        (name = "Account", description = "User account management endpoints"),
+        // ... add other tags
+    ),
+    // Optional: Add security schemes if using authentication
+    security(
+        ("jsonwebtoken" = []) // Matches security requirement name in #[utoipa::path]
+    ),
+    // Optional: External documentation link
+    // external_docs(url = "...", description = "...")
+)]
+pub struct ApiDoc;
+
+```
+
+### 1.2. `#[utoipa::path]` Macro (Controller Handlers)
+
+Annotate each Actix-web handler function (`#[get]`, `#[post]`, etc.) in `src/api/controllers/` with `#[utoipa::path]` to document the endpoint.
+
+**Key Attributes:**
+
+-   **HTTP Method:** Implicitly taken from the Actix macro (`get`, `post`, etc.).
+-   **`path`:** Automatically inferred by `utoipa-actix-web` from the Actix macro path.
+-   **`responses`:** Define possible HTTP responses.
+    -   `(status = ...)`: HTTP status code (e.g., `200`, `201`, `404`, `StatusCode::OK`, `StatusCode::CREATED`).
+    -   `description = "..."`: Explanation of the response.
+    -   `body = Type`: The type of the response body (must implement `ToSchema`). For JSON errors, use your standard error struct (e.g., `AppError`). For lists, use `Vec<Type>`.
+    -   `example = json!(...)`: Provide a JSON example. Useful for error responses.
+    -   `response = Type`: Reference a reusable response defined in `components(responses(...))` in `ApiDoc`.
+-   **`request_body = Type`:** Specify the type of the request body (must implement `ToSchema`), usually a DTO.
+-   **`params`:** Document path parameters (`Path`) and query parameters (`Query`).
+    -   `("name" = Type, Location, description = "...")`: Define parameter name, type, location (`Path` or `Query`), and description.
+    -   `example = ...`: Provide an example value.
+-   **`security`:** Link to security schemes defined in `ApiDoc`.
+    -   `("scheme_name" = [scope1, scope2])`: Use the same name defined in `ApiDoc`'s `security(...)`. Scopes are typically empty `[]` for bearer tokens.
+-   **`tag = "TagName"`:** Group endpoints under a specific tag defined in `ApiDoc`'s `tags(...)`.
+
+**Example (`src/api/controllers/account.rs`):**
+
+```rust
+// From src/api/controllers/account.rs
+
+use crate::api::dto::account::{AccountDTO, CreateAccountDTO, CredentialsDTO};
+use crate::domain::error::AppError;
+// ... other imports
+
+#[utoipa::path(
+    responses(
+        (status = 201, body = AccountDTO, description = "Account Created"), // Success response
+        (status = 400, body = AppError, example = json!(AppError::example_400())), // Error responses
+        (status = 401, body = AppError, example = json!(AppError::example_401())),
+        (status = 422, body = AppError, example = json!(AppError::example_422())),
+        (status = 500, body = AppError, example = json!(AppError::example_500())),
+        (status = 503, body = AppError, example = json!(AppError::example_503()))
+    ),
+    request_body = CreateAccountDTO, // Request body DTO
+    security(
+        // ("jsonwebtoken" = []) // Authentication might not be required for signup
+    ),
+    tag = "Account", // Groups under the "Account" tag
+)]
+#[post("/auth/signup")] // Path automatically inferred
+pub async fn signup( /* ... handler arguments ... */ ) -> ApiResult { /* ... */ }
+
+#[utoipa::path(
+    responses(
+        (status = 200, body = AccessTokenDTO, description = "Signed In Successfully"), // Success response
+        // ... responses ...
+    ),
+    request_body = CredentialsDTO, // Request body DTO
+    tag = "Account",
+    security(
+        // ("jsonwebtoken" = []) // No JWT needed for signin
+    ),
+)]
+#[post("/auth/signin")] // Path with parameter inferred
+pub async fn signin( /* ... handler arguments ... */ ) -> ApiResult { /* ... */ }
+
+// ... Remove or replace the list example as needed for Account context ...
+```
+
+### 1.3. `#[derive(ToSchema)]` Macro (DTOs)
+
+Annotate all Data Transfer Objects (DTOs) defined in `src/api/dto/` that are used in request bodies or response bodies with `#[derive(ToSchema)]`. This makes them available as components in the OpenAPI specification.
+
+**Example (`src/api/dto/account.rs`):**
+
+```rust
+// From src/api/dto/account.rs
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use validator::Validate; // Often used with DTOs
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)] // Derive ToSchema
+pub struct CreateAccountDTO {
+    // ... fields ...
+    #[schema(example = "test@example.com")] // Add examples for better documentation
+    pub email: String,
+    // ...
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)] // Derive ToSchema
+pub struct AccountDTO {
+    // ... fields ...
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)] // Derive ToSchema
+pub struct CredentialsDTO {
+    // ... fields ...
+    #[schema(example = "password123")]
+    pub password: String,
+}
+```
+
+### 1.4. `#[derive(ToResponse)]` Macro (Optional: Reusable Responses)
+
+For complex or frequently reused response structures (especially errors), you can define a dedicated response struct and derive `ToResponse`. Register it in `ApiDoc` under `components(responses(...))` and reference it in `#[utoipa::path]` using `response = MyResponseType`.
+
+## 2. Integration with Actix-web
+
+In your main application setup (`src/app.rs` or `src/main.rs`), integrate `utoipa` and `utoipa-swagger-ui`.
+
+```rust
+// Example in src/app.rs or main.rs
+
+use actix_web::web;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+use crate::api::ApiDoc; // Import the generated ApiDoc struct
+
+pub fn configure_app(cfg: &mut web::ServiceConfig, /* ... other args ... */) {
+    // ... other service configurations ...
+
+    // Serve Swagger UI
+    cfg.service(
+        SwaggerUi::new("/api-docs/{_:.*}") // URL path for Swagger UI
+            .url("/api-docs/openapi.json", ApiDoc::openapi()), // Serve the generated spec
+    );
+
+    // Configure API routes (ensure controllers are added)
+    // Example:
+    // cfg.service(
+    //     web::scope("/api/v1") // Base path for API
+    //         .configure(crate::api::controllers::account::routes)
+    // );
+}
+
+```
+
+## 3. Verification
+
+As mentioned in the `development-guide.mdc` (@development-guide):
+1.  **Generate:** Ensure the `ApiDoc` struct and all `#[utoipa::path]` macros are correctly defined.
+2.  **Run the Application:** Use `cargo run`.
+3.  **Access Swagger UI:** Navigate to the configured path (e.g., `http://localhost:8080/api-docs/`).
+4.  **Verify:**
+    *   Check that all expected endpoints are listed.
+    *   Verify path parameters, query parameters, and request bodies are correctly documented.
+    *   Ensure response schemas and examples match the actual API behavior and DTOs.
+    *   Confirm security requirements are correctly indicated.
+    *   Check the raw OpenAPI JSON (e.g., `http://localhost:8080/api-docs/openapi.json`) for accuracy.
+
+Maintain this documentation alongside code changes to keep it accurate.

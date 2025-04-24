@@ -1,0 +1,42 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Development Cycle Workflow
+
+This rule outlines the recommended development process for this project, emphasizing testing and verification.
+
+## 1. Start Development Mode
+
+Before making any changes, ensure the application is running in watch mode. This provides immediate feedback on code changes. Run the application using:
+
+```bash
+watchexec -w src -r cargo run
+```
+
+## 2. Test-Driven Development (TDD)
+
+*   **Write Tests First:** Following the guidelines in `@development-guide.mdc` and `@testing.mdc`, write unit and integration tests (`cargo llvm-cov --lcov nextest`) for the feature or fix *before* writing the implementation code. Ensure these tests initially fail.
+*   **Implementation:** Write the minimum amount of code required in the appropriate layers (`src/domain`, `src/services`, `src/infrastructure`, `src/api`) as defined in `@project-structure.mdc` to make the tests pass. Consult crate documentation as needed, especially when using unfamiliar libraries or features.
+*   **Refactor:** Once tests pass, refactor the code for clarity, efficiency, and adherence to best practices (`@development-guide.mdc`).
+
+## 3. Verification Loop
+
+After each significant change or upon completing a logical unit of work:
+
+*   **Check Logs:** Examine the application logs (from `watchexec`) to ensure there are no unexpected errors or panics.
+*   **Check Build Errors/Warnings:** Run a build check (e.g., `cargo check`) and review any reported errors or warnings from the Rust compiler or analyzer. Address these issues promptly.
+*   **Run Tests:** Execute the full test suite (`cargo llvm-cov --lcov nextest`) to confirm all tests pass.
+*   **Review Coverage:** Analyze the generated test coverage printed to the terminal stdout to identify untested code paths (see `@testing.mdc#analyzing-coverage`).
+*   **Iterate:** If errors are found, tests fail, or coverage is insufficient, return to step 2 (Implementation/Refactor/Add Tests) and fix the issues. Repeat this loop until the code is correct, all tests pass, and coverage is satisfactory.
+
+## 4. API Documentation & Verification
+
+*   **Check Swagger Docs:** If API endpoints were added or modified, verify the auto-generated OpenAPI documentation (usually at `curl http://localhost:8080/api-docs/openapi.json` or viewed via Swagger UI) is accurate and reflects the changes made. Ensure documentation follows the standards in `@openapi-documentation.mdc`.
+*   **Align Tests:** Confirm that integration tests align with the documented API behavior (request/response formats, status codes, etc.).
+
+## 5. Optimization
+
+*   **Analyze Changes:** Once the feature is functionally complete, documented, and tested, review the changes made.
+*   **Optimize:** Look for opportunities to improve performance, reduce redundancy, or enhance maintainability without compromising correctness. Ensure optimizations are also covered by tests.
